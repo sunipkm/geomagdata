@@ -46,6 +46,10 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+namespaces = false
+
+[tool.setuptools.exclude-package-data]
+geomagdata = ["tests/*"]
 
 [tool.setuptools_scm]
 
