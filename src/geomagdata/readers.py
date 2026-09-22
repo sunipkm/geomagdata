@@ -1,12 +1,14 @@
 from __future__ import annotations
-from pathlib import Path
-import pandas
-import numpy as np
+
 from datetime import datetime, timedelta
+from pathlib import Path
+
+import numpy as np
+import pandas
 from dateutil.parser import parse
 
-from .web import URLmonthly, URL45dayfcast, URL20yearfcast
 from .utils import yeardec2datetime
+from .web import URL20yearfcast, URL45dayfcast, URLmonthly
 
 
 def load(flist: Path | list[Path]) -> pandas.DataFrame:
@@ -22,7 +24,7 @@ def load(flist: Path | list[Path]) -> pandas.DataFrame:
     for fn in flist:
         if len(fn.name) == 4:
             inds.append(readdaily(fn))
-        elif 'Kp_ap_Ap_SN_F107_' in fn.name:
+        elif "Kp_ap_Ap_SN_F107_" in fn.name:
             inds.append(readdailynew(fn))
         elif fn.name == URLmonthly["f107"].split("/")[-1]:
             monthly_data["f107"] = read_monthly(fn)
@@ -47,8 +49,26 @@ def load(flist: Path | list[Path]) -> pandas.DataFrame:
 
 
 def readdaily(flist: Path | list[Path]) -> pandas.DataFrame:
-    kp_cols = [(12, 14), (14, 16), (16, 18), (18, 20), (20, 22), (22, 24), (24, 26), (26, 28)]
-    ap_cols = [(31, 34), (34, 37), (37, 40), (40, 43), (43, 46), (46, 49), (49, 52), (52, 55)]
+    kp_cols = [
+        (12, 14),
+        (14, 16),
+        (16, 18),
+        (18, 20),
+        (20, 22),
+        (22, 24),
+        (24, 26),
+        (26, 28),
+    ]
+    ap_cols = [
+        (31, 34),
+        (34, 37),
+        (37, 40),
+        (40, 43),
+        (43, 46),
+        (46, 49),
+        (49, 52),
+        (52, 55),
+    ]
     f107_cols = (65, 70)
 
     rawAp: list[str] = []
@@ -59,12 +79,24 @@ def readdaily(flist: Path | list[Path]) -> pandas.DataFrame:
     if isinstance(flist, Path):
         flist = [flist]
 
+    # The legacy fixed-width format stores a 2-digit year. Disambiguate the
+    # century against the current year rather than a hardcoded cutoff, so
+    # this keeps working as time passes (a hardcoded "< 38" cutoff would
+    # start misreading real 2038+ dates as 1938+).
+    century_cutoff = (datetime.now().year + 1) % 100
+
     for fn in flist:
         with fn.open() as f:
             for line in f:
-                # FIXME: century ambiguity of original data
-                year = 2000 + int(line[:2]) if int(line[:2]) < 38 else 1900 + int(line[:2])
-                days.append(datetime(year=year, month=int(line[2:4]), day=int(line[4:6])))
+                two_digit_year = int(line[:2])
+                year = (
+                    2000 + two_digit_year
+                    if two_digit_year <= century_cutoff
+                    else 1900 + two_digit_year
+                )
+                days.append(
+                    datetime(year=year, month=int(line[2:4]), day=int(line[4:6]))
+                )
                 rawAp += [line[i[0] : i[1]] for i in ap_cols]
                 rawKp += [line[i[0] : i[1]] for i in kp_cols]
 
@@ -72,7 +104,11 @@ def readdaily(flist: Path | list[Path]) -> pandas.DataFrame:
                 # MUCH faster to generate here than to fill after DF generation
                 rawf107 += [line[f107_cols[0] : f107_cols[1]]] * 8
     # %% construct time
-    dtime = [day + timedelta(minutes=m) for day in days for m in range(90, 24 * 60 + 90, 3 * 60)]
+    dtime = [
+        day + timedelta(minutes=m)
+        for day in days
+        for m in range(90, 24 * 60 + 90, 3 * 60)
+    ]
     # %% build and fill array
     names = ["Ap", "Kp"]
     df = pandas.DataFrame(index=dtime, columns=names)
@@ -89,8 +125,26 @@ def readdaily(flist: Path | list[Path]) -> pandas.DataFrame:
 
 
 def readdailynew(flist: Path | list[Path]) -> pandas.DataFrame:
-    kp_cols = [(34, 40), (41, 47), (48, 54), (55, 61), (62, 68), (69, 75), (76, 82), (83, 89)]
-    ap_cols = [(90, 94), (95, 99), (100, 104), (105, 109), (110, 114), (115, 119), (120, 124), (125, 129)]
+    kp_cols = [
+        (34, 40),
+        (41, 47),
+        (48, 54),
+        (55, 61),
+        (62, 68),
+        (69, 75),
+        (76, 82),
+        (83, 89),
+    ]
+    ap_cols = [
+        (90, 94),
+        (95, 99),
+        (100, 104),
+        (105, 109),
+        (110, 114),
+        (115, 119),
+        (120, 124),
+        (125, 129),
+    ]
     f107_cols = (149, 157)
 
     rawAp: list[str] = []
@@ -104,9 +158,13 @@ def readdailynew(flist: Path | list[Path]) -> pandas.DataFrame:
     for fn in flist:
         with fn.open() as f:
             for line in f:
-                if '#' == line[0]:
+                if "#" == line[0]:
                     continue
-                days.append(datetime(year=int(line[:4]), month=int(line[5:7]), day=int(line[8:10])))
+                days.append(
+                    datetime(
+                        year=int(line[:4]), month=int(line[5:7]), day=int(line[8:10])
+                    )
+                )
                 rawAp += [line[i[0] : i[1]] for i in ap_cols]
                 rawKp += [line[i[0] : i[1]] for i in kp_cols]
 
@@ -114,7 +172,11 @@ def readdailynew(flist: Path | list[Path]) -> pandas.DataFrame:
                 # MUCH faster to generate here than to fill after DF generation
                 rawf107 += [line[f107_cols[0] : f107_cols[1]]] * 8
     # %% construct time
-    dtime = [day + timedelta(minutes=m) for day in days for m in range(90, 24 * 60 + 90, 3 * 60)]
+    dtime = [
+        day + timedelta(minutes=m)
+        for day in days
+        for m in range(90, 24 * 60 + 90, 3 * 60)
+    ]
     # %% build and fill array
     names = ["Ap", "Kp"]
     df = pandas.DataFrame(index=dtime, columns=names)
@@ -135,6 +197,8 @@ def read20yearfcast(fn: Path) -> pandas.DataFrame:
     dat = np.loadtxt(fn, usecols=(0, 3, 6), skiprows=11)
 
     time = yeardec2datetime(dat[:, 0])
+    if isinstance(time, datetime):  # dat[:, 0] is always an array, never a lone scalar
+        time = [time]
 
     data = pandas.DataFrame(data=dat[:, 1:3], index=time, columns=["Ap", "f107"])
 
@@ -159,6 +223,8 @@ def read_monthly(file: Path) -> pandas.Series:
                 date.append(datetime(int(year), month, 1))
 
         data = pandas.Series(index=date, data=dat[:, 1:].ravel())
+    else:
+        raise ValueError(f"don't know how to read monthly data file {file}")
 
     data[data < 0] = np.nan  # by NOAA definition
 
@@ -189,7 +255,9 @@ def read45dayfcast(fn: Path) -> pandas.DataFrame:
             time += [parse(t) for t in ls[::2]]
             f107 += [float(a) for a in ls[1::2]]
 
-    dat = pandas.DataFrame(data=np.column_stack((Ap, f107)), index=time, columns=["Ap", "f107"])
+    dat = pandas.DataFrame(
+        data=np.column_stack((Ap, f107)), index=time, columns=["Ap", "f107"]
+    )
 
     dat["resolution"] = "w"
 

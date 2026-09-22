@@ -1,16 +1,48 @@
 from __future__ import annotations
+
 import typing
-import pandas
+from datetime import date, datetime, timedelta
+
 import numpy as np
-from dateutil.parser import parse
-from datetime import datetime, date, timedelta
+import pandas
 import pytz
+import whenever
+from dateutil.parser import parse
 
+from .readers import load
 from .web import downloadfile
-from .io import load
+
+#: `whenever` types that carry an unambiguous, exact instant -- always
+#: converted to true UTC regardless of the `tzaware` argument (see
+#: `todatetime`), unlike a plain `datetime.datetime`, which is ambiguous
+#: about what its own tzinfo (or lack of one) actually means.
+_WheneverExact = (whenever.Instant, whenever.ZonedDateTime, whenever.OffsetDateTime)
+
+#: Anything `todatetime` accepts: a single time-like value, or a
+#: sequence/array/`pandas.DatetimeIndex` of them.
+TimeLike = (
+    str
+    | date
+    | datetime
+    | np.datetime64
+    | whenever.Instant
+    | whenever.ZonedDateTime
+    | whenever.OffsetDateTime
+    | whenever.PlainDateTime
+    | whenever.Date
+    | typing.Sequence
+    | np.ndarray
+    | pandas.DatetimeIndex
+)
 
 
-def get_indices(time: str | datetime, smoothdays: int = None, forcedownload: bool = False, newsource: bool = True, tzaware: bool = False) -> pandas.DataFrame:
+def get_indices(
+    time: TimeLike,
+    smoothdays: int | None = None,
+    forcedownload: bool = False,
+    newsource: bool = True,
+    tzaware: bool = False,
+) -> pandas.DataFrame:
     """Get geomagnetic indices.
 
     alternative going back to 1931:
@@ -23,7 +55,8 @@ def get_indices(time: str | datetime, smoothdays: int = None, forcedownload: boo
     ftp://ftp.gfz-potsdam.de/pub/home/obs/Kp_ap_Ap_SN_F107/
 
     Args:
-        time (str | datetime): Time near which datetime is evaluated.
+        time (TimeLike): Time (or times) near which indices are evaluated.
+            A single value or a sequence/array/`pandas.DatetimeIndex`.
         smoothdays (int, optional): Days to average over (for f10.7). Defaults to None.
         forcedownload (bool, optional): Force downloading data from servers every time. Defaults to False.
         newsource (bool, optional): Use the new datasource (newsource). Defaults to True.
@@ -40,37 +73,121 @@ def get_indices(time: str | datetime, smoothdays: int = None, forcedownload: boo
     dat: pandas.DataFrame = load(fn)
     # %% optional smoothing over days
     if isinstance(smoothdays, int):
-        periods = np.rint(timedelta(days=smoothdays) / (dat.index[1] - dat.index[0])).astype(int)
+        periods = np.rint(
+            timedelta(days=smoothdays) / (dat.index[1] - dat.index[0])
+        ).astype(int)
 
+        # `center=True`: F10.7A/Ap-smoothed conventionally average the
+        # `smoothdays` window *centered* on each day (e.g. the standard
+        # NRLMSISE-00 F10.7A is the mean of the 40 days before through
+        # the 40 days after), not a trailing window ending on that day.
+        # pandas' own `rolling()` default (`center=False`) is trailing;
+        # leaving it unset here silently biased every `smoothdays`-based
+        # average old, most visibly right after a solar-activity swing.
         if "f107" in dat:
-            dat["f107s"] = dat["f107"].rolling(periods, min_periods=1).mean()
+            dat["f107s"] = (
+                dat["f107"].rolling(periods, center=True, min_periods=1).mean()
+            )
         if "Ap" in dat:
-            dat["Aps"] = dat["Ap"].rolling(periods, min_periods=1).mean()
+            dat["Aps"] = dat["Ap"].rolling(periods, center=True, min_periods=1).mean()
 
     # %% pull out the times we want
-    i = dat.index.get_indexer(dtime, method='nearest')  # fix for get_loc deprecation warning
+    i = dat.index.get_indexer(
+        pandas.Index(dtime), method="nearest"
+    )  # fix for get_loc deprecation warning
     Indices = dat.iloc[i, :]
 
     return Indices
 
 
-getApF107 = get_indices  # legacy
+def get_storm_ap(
+    time: TimeLike,
+    forcedownload: bool = False,
+    newsource: bool = True,
+    tzaware: bool = False,
+) -> np.ndarray:
+    """NRLMSISE-00's real 7-element storm-time `ap` history (`AP(1..7)`,
+    `nrlmsise00.f`'s own `GTD7` header convention, quoted verbatim):
+    `AP(1)`=daily Ap (mean of the eight 3-hour values for `time`'s own
+    UTC day), `AP(2)`=3-hour ap for the current time, `AP(3)`=3-hour ap
+    for 3 hours before, `AP(4)`=3-hour ap for 6-9 hours before,
+    `AP(5)`=3-hour ap for 9-12 hours before, `AP(6)`=average of the
+    eight 3-hour ap indices from 12 to 33 hours prior, `AP(7)`=average
+    of the eight 3-hour ap indices from 36 to 57 hours prior. Ported
+    from `glowpython2.atmo_msis00.NrlMsis00.storm_ap`, already verified
+    against that same header directly -- not re-derived here.
+
+    Unlike `get_indices`, this always resolves one storm-ap array for
+    one instant, not a batch -- `time` may be any single `TimeLike`
+    value, but only its first resolved instant is used.
+
+    Args:
+        time: The instant to resolve the storm-ap history around.
+        forcedownload/newsource: forwarded to `get_indices`.
+        tzaware: Whether `time` is timezone-aware.
+
+    Returns:
+        np.ndarray: length-7 `float32`.
+    """
+    # Resolve once to a naive-UTC anchor via `todatetime`'s own
+    # convention, then reuse `tzaware=False` for every sub-fetch below
+    # -- these are already-normalized values, not the caller's own
+    # `time`, so re-applying `tzaware=True` would double-convert them
+    # (`datetime.astimezone()` on an already-naive value reinterprets
+    # it as local system time, not UTC).
+    t = todatetime(time, tzaware)[0]
+    day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
+    fetch_kwargs = {
+        "forcedownload": forcedownload,
+        "newsource": newsource,
+        "tzaware": False,
+    }
+
+    ap = np.zeros(7, dtype=float)
+
+    daily = get_indices(
+        [day_start + timedelta(hours=h) for h in range(0, 24, 3)], **fetch_kwargs
+    )
+    ap[0] = daily["Ap"].to_numpy().mean()
+
+    recent = get_indices(
+        [t, t - timedelta(hours=3), t - timedelta(hours=6), t - timedelta(hours=9)],
+        **fetch_kwargs,
+    )
+    ap[1:5] = recent["Ap"].to_numpy()
+
+    mid = get_indices(
+        [t - timedelta(hours=h) for h in range(12, 36, 3)], **fetch_kwargs
+    )
+    ap[5] = mid["Ap"].to_numpy().mean()
+
+    late = get_indices(
+        [t - timedelta(hours=h) for h in range(36, 60, 3)], **fetch_kwargs
+    )
+    ap[6] = late["Ap"].to_numpy().mean()
+
+    return ap.astype(np.float32, order="F")
 
 
-def moving_average(dat: pandas.Series, periods: int) -> np.ndarray:
-
-    if periods > dat.size:
-        raise ValueError("cannot smooth over more time periods than exist in the data")
-
-    return np.convolve(dat, np.ones(periods) / periods, mode="same")
-
-
-def todatetime(time: str | date | datetime | np.datetime64, tzaware: bool = True) -> typing.Any:
+def todatetime(time: TimeLike, tzaware: bool = True) -> np.ndarray:
     if isinstance(time, str):
         d = todatetime(parse(time), tzaware)
+    elif isinstance(time, _WheneverExact):
+        # An exact instant is unambiguous -- always convert to true UTC,
+        # regardless of what `tzaware` says, unlike the `datetime` branch
+        # below (which is guessing at what a plain `datetime`'s own
+        # tzinfo, or lack of one, actually means).
+        d = todatetime(time.to_stdlib(), tzaware=True)
+    elif isinstance(time, whenever.PlainDateTime):
+        # Naive by construction -- nothing to reinterpret.
+        d = todatetime(time.to_stdlib(), tzaware=False)
+    elif isinstance(time, whenever.Date):
+        d = todatetime(time.to_stdlib(), tzaware)
     elif isinstance(time, datetime):
         if tzaware:
-            d = time.astimezone(pytz.utc).replace(tzinfo=None)  # convert to UTC and strip timezone
+            d = time.astimezone(pytz.utc).replace(
+                tzinfo=None
+            )  # convert to UTC and strip timezone
         else:
             d = time.replace(tzinfo=None)  # simply strip timezone info, old behavior
     elif isinstance(time, np.datetime64):
@@ -80,29 +197,10 @@ def todatetime(time: str | date | datetime | np.datetime64, tzaware: bool = True
     elif isinstance(time, (tuple, list, np.ndarray)):
         d = np.atleast_1d([todatetime(t, tzaware) for t in time]).squeeze()
     elif isinstance(time, pandas.DatetimeIndex):
-        d = todatetime(time.to_pydatetime(), tzaware)
+        d = todatetime(time.to_pydatetime(), tzaware)  # type: ignore[attr-defined]
     else:
         raise TypeError(f"{time} must be representable as datetime.datetime")
 
-    dates = np.atleast_1d(d).ravel()
+    dates = np.atleast_1d(d).ravel()  # type: ignore[arg-type]
 
     return dates
-
-def cli():
-    """
-    simple demo of retrieving common geomagnetic indices by date
-    """
-    from argparse import ArgumentParser
-
-    p = ArgumentParser()
-    p.add_argument("date", help="time of observation yyyy-mm-ddTHH:MM:ss")
-    p.add_argument("-s", "--smoothdays", help="days to smooth observation for f107a", type=int)
-    a = p.parse_args()
-
-    inds = get_indices(a.date, a.smoothdays)
-
-    print(inds)
-
-
-if __name__ == "__main__":
-    cli()

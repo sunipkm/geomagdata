@@ -1,6 +1,10 @@
-from .base import get_indices, getApF107
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = '1.6.1'
+from .base import get_indices, get_storm_ap
 
-__all__ = ['get_indices', 'getApF107', '__version__']
+try:
+    __version__ = version("geomagdata")
+except PackageNotFoundError:  # not installed, e.g. running from a raw checkout
+    __version__ = "unknown"
 
+__all__ = ["__version__", "get_indices", "get_storm_ap"]

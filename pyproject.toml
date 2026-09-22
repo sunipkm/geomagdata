@@ -1,8 +1,61 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=64", "setuptools_scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geomagdata"
+dynamic = ["version"]
+description = "Download and parse geomagnetic indices"
+readme = "README.md"
+license = { file = "LICENSE.txt" }
+authors = [
+  { name = "Sunip K. Mukherjee", email = "sunipkmukherjee@gmail.com" },
+  { name = "Michael Hirsch, Ph.D." },
+]
+requires-python = ">= 3.11"
+keywords = ["aeronomy", "aurora", "ionosphere"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
+dependencies = [
+  "python-dateutil",
+  "requests",
+  "numpy",
+  "pandas >= 3.0.0",
+  "pytz",
+  "platformdirs",
+  "whenever>=0.10.5,<0.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/sunipkm/geomagdata"
+
+[project.optional-dependencies]
+tests = ["pytest"]
+lint = ["flake8", "flake8-bugbear", "flake8-builtins", "flake8-blind-except", "mypy"]
+plot = ["matplotlib"]
+
+[tool.setuptools]
+zip-safe = true
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
 
 [tool.black]
 line-length = 100
+
+[tool.ruff.lint]
+ignore = [
+  "DTZ",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra -v"
