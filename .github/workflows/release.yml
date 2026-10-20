@@ -1,0 +1,96 @@
+name: Release
+
+# Pushing a tag vX.Y.Z publishes that version to PyPI and creates a GitHub release with the
+# built sdist/wheel attached. The version comes from the tag itself (setuptools_scm). CI
+# (ci.yml) runs first, and the built wheel is install-tested on every OS/Python combination
+# ci.yml covers before anything is published -- nothing goes out unless all of that passes.
+#
+# Needs: this workflow registered as a trusted publisher for the `geomagdata` project on
+# PyPI (environment `pypi`, see https://docs.pypi.org/trusted-publishers/). No token/secret
+# required -- publishing authenticates via OIDC.
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # setuptools_scm needs the full history/tags to derive the version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  # The one (pure-Python) wheel built above, installed fresh and tested on every OS/Python
+  # combination ci.yml's own `test` job covers -- not just the Ubuntu/3.11 it was built on.
+  test-wheel:
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: pip install "$(ls dist/*.whl)[tests]"
+      # The package source isn't on the path here, only the installed wheel -- tests run
+      # against that, same as the local wheel-install check this release flow replaces.
+      - run: pytest src/geomagdata/tests
+
+  pypi:
+    needs: [build, test-wheel]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "${{ github.repository }}" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes \
+            --latest
