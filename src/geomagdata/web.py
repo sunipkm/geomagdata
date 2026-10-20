@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ftplib
 import socket
-import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -18,7 +17,17 @@ URLmonthly = {
 }
 URLdaily = "ftp://ftp.ngdc.noaa.gov/STP/GEOMAGNETIC_DATA/INDICES/KP_AP/"
 URL45dayfcast = "https://services.swpc.noaa.gov/text/45-day-forecast.txt"
+
+# `sail.msfc.nasa.gov` is gone (DNS no longer resolves, confirmed from
+# multiple independent networks) -- this one-time 15-year solar-cycle
+# estimate was never going to be updated again anyway, so it's bundled
+# directly as package data instead of fetched live. `URL20yearfcast` is
+# kept only as provenance for `ASSET_20yearfcast`'s filename/content and
+# for `readers.load`'s filename-based dispatch.
 URL20yearfcast = "https://sail.msfc.nasa.gov/solar_report_archives/May2016Rpt.pdf"
+ASSET_20yearfcast = (
+    Path(__file__).parent / "assets" / (URL20yearfcast.split("/")[-1].split(".")[0] + ".txt")
+)
 
 URLNewSource = 'ftp://ftp.gfz-potsdam.de/pub/home/obs/Kp_ap_Ap_SN_F107/'
 
@@ -74,13 +83,7 @@ def downloadfile(time: np.ndarray, smoothdays: int, force: bool, newsource: bool
 
             flist.append(fn)
         elif t.timestamp() > nearfuture.timestamp():  # future
-            txt_fn = (path / URL20yearfcast.split("/")[-1]).with_suffix(".txt")
-            if force or not exist_ok(txt_fn):
-                pdf_fn = path / URL20yearfcast.split("/")[-1]
-                if force or not exist_ok(pdf_fn):
-                    download(URL20yearfcast, pdf_fn)
-                pdf2text(pdf_fn)
-            flist.append(txt_fn)
+            flist.append(ASSET_20yearfcast)
         else:
             raise ValueError(f"Raise a GitHub issue if this is a problem  {t}")
     return list(set(flist))  # dedupe
@@ -142,8 +145,3 @@ def exist_ok(fn: Path, maxage: timedelta | None = None) -> bool:
         ok &= (datetime.now(UTC) - mtime) <= maxage
 
     return ok
-
-
-def pdf2text(fn: Path):
-    """ for May2016Rpt.pdf """
-    subprocess.check_call(["pdftotext", "-layout", "-f", "12", "-l", "15", str(fn)])

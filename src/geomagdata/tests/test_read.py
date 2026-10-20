@@ -96,7 +96,7 @@ def test_past_and_future():
     dat = _get_indices_or_skip(dates)
 
     pasttime = datetime(2017, 1, 1)
-    if dat["resolution"][0] == "d":
+    if dat["resolution"].iloc[0] == "d":
         pasttime += timedelta(hours=1, minutes=30)
 
     assert (dat.index == [pasttime, datetime(2030, 3, 2, 22, 55, 11, 999997)]).all()

@@ -10,7 +10,7 @@ readme = "README.md"
 license = { file = "LICENSE.txt" }
 authors = [
   { name = "Sunip K. Mukherjee", email = "sunipkmukherjee@gmail.com" },
-  { name = "Michael Hirsch, Ph.D." },
+  { name = "Michael Hirsch" },
 ]
 requires-python = ">= 3.11"
 keywords = ["aeronomy", "aurora", "ionosphere"]
@@ -29,7 +29,7 @@ dependencies = [
   "pandas >= 3.0.0",
   "pytz",
   "platformdirs",
-  "whenever>=0.10.5,<0.11",
+  "whenever>=0.11, < 0.12",
 ]
 
 [project.urls]
@@ -37,7 +37,13 @@ Homepage = "https://github.com/sunipkm/geomagdata"
 
 [project.optional-dependencies]
 tests = ["pytest"]
-lint = ["flake8", "flake8-bugbear", "flake8-builtins", "flake8-blind-except", "mypy"]
+lint = [
+  "flake8",
+  "flake8-bugbear",
+  "flake8-builtins",
+  "flake8-blind-except",
+  "mypy",
+]
 plot = ["matplotlib"]
 
 [tool.setuptools]
@@ -57,9 +63,7 @@ geomagdata = ["tests/*"]
 line-length = 100
 
 [tool.ruff.lint]
-ignore = [
-  "DTZ",
-]
+ignore = ["DTZ"]
 
 [tool.pytest.ini_options]
 addopts = "-ra -v"
